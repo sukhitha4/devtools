@@ -2,83 +2,67 @@ function tail_grid() {
     local env="$1"
     local pod_pattern="$2"
     
-    # Check if both parameters are provided
     if [[ -z "$env" || -z "$pod_pattern" ]]; then
         echo "Usage: tail_grid <prod|np> <pod-name-pattern>"
-        echo "Example: tail_grid np auth-service"
         return 1
     fi
 
     local cluster_urls=()
-
-    # Determine which set of URLs to use based on the environment parameter
     case "$env" in
         prod)
-            cluster_urls=(
-                "https://prod-url1:6443"
-                "https://prod-url2:6443"
-                "https://prod-url3:6443"
-                "https://prod-url4:6443"
-            )
+            cluster_urls=("https://prod-1" "https://prod-2" "https://prod-3" "https://prod-4")
             ;;
         np)
-            cluster_urls=(
-                "https://np-url1:6443"
-                "https://np-url2:6443"
-                "https://np-url3:6443"
-                "https://np-url4:6443"
-            )
+            cluster_urls=("https://np-1" "https://np-2" "https://np-3" "https://np-4")
             ;;
         *)
-            echo "Error: Invalid environment '$env'. Please specify 'prod' or 'np'."
+            echo "Error: Use 'prod' or 'np'."
             return 1
             ;;
     esac
 
-    # Toggles between Vertical and Horizontal to tile the panes into a grid
-    local split_dir="V"
-
-    for url in "${cluster_urls[@]}"; do
-        echo "========================================"
-        echo "Logging into $env cluster: $url..."
+    for i in "${!cluster_urls[@]}"; do
+        local url="${cluster_urls[$i]}"
+        echo "----------------------------------------"
+        echo "Logging into Cluster $((i+1)): $url"
         
-        # Standard oc login
-        oc login "$url"
+        oc login "$url" --insecure-skip-tls-verify=true > /dev/null
+        local current_ctx=$(kubectl config current-context)
         
-        # Capture the new context name
-        local current_ctx
-        current_ctx=$(kubectl config current-context)
-
-        # Fetch pods matching the input parameter
-        local pods
-        pods=$(kubectl get pods -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -i "$pod_pattern")
+        # Find up to 4 pods matching the pattern for this cluster
+        local pods=$(kubectl get pods -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -i "$pod_pattern" | head -n 4)
 
         if [[ -z "$pods" ]]; then
-            echo "No pods matching '$pod_pattern' found in $current_ctx."
+            echo "No pods found in cluster $url"
             continue
         fi
 
+        local p_idx=0
         for pod in $pods; do
-            echo "Spawning log stream for: $pod"
+            # Define the log command with context locking
+            local cmd="kubectl --context=$current_ctx logs -f $pod; echo 'Stream ended'; read"
             
-            # The command to execute inside the new ConEmu pane. 
-            local cmd="kubectl --context=$current_ctx logs -f $pod; echo -e '\n[Stream ended. Press Enter to close]'; read"
-            
-            # Launch in a new ConEmu split.
-            bash -c "$cmd" "-new_console:s${split_dir}"
-            
-            # Toggle the split direction to build the grid dynamically
-            if [[ "$split_dir" == "V" ]]; then
-                split_dir="H"
+            if [[ $i -eq 0 && $p_idx -eq 0 ]]; then
+                # The very first pod of the first cluster runs in the main pane
+                echo "Starting first pod in main pane..."
+                eval "$cmd" & 
             else
-                split_dir="V"
+                # Logic for grid placement:
+                # If it's the first pod of a NEW cluster, split Vertically (New Column)
+                # If it's a subsequent pod in the SAME cluster, split Horizontally (New Row)
+                local split_type="sH"
+                if [[ $p_idx -eq 0 ]]; then
+                    split_type="sV"
+                fi
+
+                echo "Spawning $split_type for $pod..."
+                bash -c "$cmd" "-new_console:$split_type"
+                sleep 0.8 # Essential for ConEmu to finish the UI render before the next split
             fi
-            
-            # Brief sleep to ensure ConEmu processes the hook
-            sleep 0.5
+            ((p_idx++))
         done
     done
     
-    echo "========================================"
-    echo "Grid deployment complete for $env."
+    echo "----------------------------------------"
+    echo "4x4 Grid Deployment Complete."
 }
