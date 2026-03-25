@@ -1,32 +1,51 @@
 function tail_grid() {
-    local pod_pattern="$1"
+    local env="$1"
+    local pod_pattern="$2"
     
-    if [[ -z "$pod_pattern" ]]; then
-        echo "Usage: tail_grid <pod-name-pattern>"
-        echo "Example: tail_grid auth-service"
+    # Check if both parameters are provided
+    if [[ -z "$env" || -z "$pod_pattern" ]]; then
+        echo "Usage: tail_grid <prod|np> <pod-name-pattern>"
+        echo "Example: tail_grid np auth-service"
         return 1
     fi
 
-    # Define your 4 cluster URLs here
-    local cluster_urls=(
-        "https://url1:6443"
-        "https://url2:6443"
-        "https://url3:6443"
-        "https://url4:6443"
-    )
+    local cluster_urls=()
+
+    # Determine which set of URLs to use based on the environment parameter
+    case "$env" in
+        prod)
+            cluster_urls=(
+                "https://prod-url1:6443"
+                "https://prod-url2:6443"
+                "https://prod-url3:6443"
+                "https://prod-url4:6443"
+            )
+            ;;
+        np)
+            cluster_urls=(
+                "https://np-url1:6443"
+                "https://np-url2:6443"
+                "https://np-url3:6443"
+                "https://np-url4:6443"
+            )
+            ;;
+        *)
+            echo "Error: Invalid environment '$env'. Please specify 'prod' or 'np'."
+            return 1
+            ;;
+    esac
 
     # Toggles between Vertical and Horizontal to tile the panes into a grid
     local split_dir="V"
 
     for url in "${cluster_urls[@]}"; do
         echo "========================================"
-        echo "Logging into $url..."
+        echo "Logging into $env cluster: $url..."
         
-        # Standard oc login. Prompts will appear here if tokens/passwords are needed.
+        # Standard oc login
         oc login "$url"
         
-        # Capture the new context name so the split panes don't lose connection 
-        # when the loop moves to the next cluster.
+        # Capture the new context name
         local current_ctx
         current_ctx=$(kubectl config current-context)
 
@@ -43,10 +62,9 @@ function tail_grid() {
             echo "Spawning log stream for: $pod"
             
             # The command to execute inside the new ConEmu pane. 
-            # We append a read command so the pane doesn't instantly close if the pod crashes or restarts.
             local cmd="kubectl --context=$current_ctx logs -f $pod; echo -e '\n[Stream ended. Press Enter to close]'; read"
             
-            # Launch in a new ConEmu split. ConEmu intercepts the -new_console flag.
+            # Launch in a new ConEmu split.
             bash -c "$cmd" "-new_console:s${split_dir}"
             
             # Toggle the split direction to build the grid dynamically
@@ -56,11 +74,11 @@ function tail_grid() {
                 split_dir="V"
             fi
             
-            # Brief sleep to ensure ConEmu processes the hook before the loop fires the next one
+            # Brief sleep to ensure ConEmu processes the hook
             sleep 0.5
         done
     done
     
     echo "========================================"
-    echo "Grid deployment complete."
+    echo "Grid deployment complete for $env."
 }
